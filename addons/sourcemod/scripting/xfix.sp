@@ -1,3 +1,5 @@
+/*This is a work in progress. It includes large changes, different from the original xFix. This version incorportates xFov, footsteps and other meaningful fixes. This was intended for personal use until fully tested.*/
+
 /******************************
 COMPILE OPTIONS
 ******************************/
