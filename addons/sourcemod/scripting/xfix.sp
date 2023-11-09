@@ -751,7 +751,7 @@ void ReplicateToAll(const char[] sValue)
 	}
 }
 
-bool TraceEntityFilter(int entity, int contentsMask, any data)	  // What am I supposed to do with this?
+bool TraceEntityFilter(int entity, int contentsMask, any data)
 {
 	if (entity == data)
 	{
