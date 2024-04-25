@@ -36,7 +36,6 @@ PLUGIN DEFINES
 #define ZOOM_SUIT	2
 #define ZOOM_TOGL	3
 #define FIRSTPERSON 4
-#define MAX_BUTTONS 25
 
 /*Setting static strings*/
 static const char
@@ -81,9 +80,10 @@ bool gbLate,
 								gbMOTDExists,
 								gbTeamplay,
 
-								g_bHasAr2[MAXPLAYERS + 1]		 = { false, ... },
-								g_bHooked[MAXPLAYERS + 1]		 = { false, ... },
-								g_bSpawned[MAXPLAYERS + 1]		 = { false, ... },
+								g_bHasAr2[MAXPLAYERS + 1]  = { false, ... },
+								g_bHooked[MAXPLAYERS + 1]  = { false, ... },
+								g_bSpawned[MAXPLAYERS + 1] = { false, ... },
+								g_bReload,
 
 								g_bAuthenticated[MAXPLAYERS + 1] = { false, ... };
 /******************************
@@ -225,41 +225,11 @@ static const char g_sChatSnd[1][25] = {
 	"common/talk.wav",
 };
 
-static const char g_sModels[49][70] = {
+static char g_sModels[19][75] = {
 	"models/combine_soldier.mdl",
 	"models/combine_soldier_prisonguard.mdl",
 	"models/combine_super_soldier.mdl",
 	"models/police.mdl",
-	"models/humans/group01/female_01.mdl",
-	"models/humans/group01/female_02.mdl",
-	"models/humans/group01/female_03.mdl",
-	"models/humans/group01/female_04.mdl",
-	"models/humans/group01/female_06.mdl",
-	"models/humans/group01/female_07.mdl",
-	"models/humans/group01/male_01.mdl",
-	"models/humans/group01/male_02.mdl",
-	"models/humans/group01/male_03.mdl",
-	"models/humans/group01/male_04.mdl",
-	"models/humans/group01/male_05.mdl",
-	"models/humans/group01/male_06.mdl",
-	"models/humans/group01/male_07.mdl",
-	"models/humans/group01/male_08.mdl",
-	"models/humans/group01/male_09.mdl",
-	"models/humans/group02/female_01.mdl",
-	"models/humans/group02/female_02.mdl",
-	"models/humans/group02/female_03.mdl",
-	"models/humans/group02/female_04.mdl",
-	"models/humans/group02/female_06.mdl",
-	"models/humans/group02/female_07.mdl",
-	"models/humans/group02/male_01.mdl",
-	"models/humans/group02/male_02.mdl",
-	"models/humans/group02/male_03.mdl",
-	"models/humans/group02/male_04.mdl",
-	"models/humans/group02/male_05.mdl",
-	"models/humans/group02/male_06.mdl",
-	"models/humans/group02/male_07.mdl",
-	"models/humans/group02/male_08.mdl",
-	"models/humans/group02/male_09.mdl",
 	"models/humans/group03/female_01.mdl",
 	"models/humans/group03female_02.mdl",
 	"models/humans/group03/female_03.mdl",
@@ -406,10 +376,11 @@ public void OnPluginStart()
 	gConVar.g_cTeamplay				 = FindConVar("mp_teamplay");
 	gConVar.mp_falldamage			 = FindConVar("mp_falldamage");
 	gConVar.sv_gravity				 = FindConVar("sv_gravity");
-	gCvar							 = FindConVar("sv_footsteps");
 	gConVar.mp_forcerespawn			 = FindConVar("mp_forcerespawn");
 	gConVar.sk_auto_reload_time		 = FindConVar("sk_auto_reload_time");	 // Tie the relaod time to this ConVar
 	gConVar.mp_restartgame			 = FindConVar("mp_restartgame");
+	gCvar							 = FindConVar("sv_footsteps");
+	
 	HookConVarChange(gConVar.mp_restartgame, RoundRestartCall);
 
 	/*HOOKING*/
@@ -462,8 +433,7 @@ public void OnPluginStart()
 
 public void RoundRestartCall(ConVar convar, const char[] oldValue, const char[] newValue)
 {
-	if (GetConVarInt(gConVar.mp_restartgame) > 0)
-		PrintToChatAll("Round is restarting!");
+	g_bReload = false;
 
 	for (int client = 1; client <= MaxClients; client++)
 	{
@@ -585,6 +555,8 @@ public Action Event_RoundStart(Handle hEvent, const char[] sEvent, bool bDontBro
 	gmKills.Clear();
 	gmDeaths.Clear();
 
+	g_bReload = true;
+
 	return Plugin_Continue;
 }
 
@@ -649,7 +621,7 @@ public void OnClientPutInServer(int iClient)
 	if (GetConVarBool(gConVar.sm_pluginmessages_check))
 		QueryClientConVar(iClient, "cl_showpluginmessages", q_PluginMessages);
 
-	CreateTimer(60.0, t_AuthCheck, iClient, TIMER_DATA_HNDL_CLOSE | TIMER_FLAG_NO_MAPCHANGE);
+	CreateTimer(60.0, t_AuthCheck, iClient, TIMER_FLAG_NO_MAPCHANGE);
 
 	SDKHook(iClient, SDKHook_WeaponSwitchPost, OnClientSwitchWeapon);
 
@@ -1104,12 +1076,7 @@ public Action changeteamtimer(Handle timer, DataPack pack)
 		if (!IsClientInGame(client))
 			return Plugin_Stop;
 
-		int	 rdm_mdl = GetRandomInt(4, 49);
-		char s_model[75];
-
-		IntToString(rdm_mdl, s_model, sizeof(s_model));
-
-		ClientCommand(client, "cl_playermodel %s", s_model);
+		ClientCommand(client, "cl_playermodel %s", g_sModels[GetRandomInt(4, 18)]);
 		SetEntityRenderColor(client, 255, 255, 255, 255);
 		if (GetConVarBool(gConVar.g_cplayermodelmsg))
 		{
@@ -1120,7 +1087,7 @@ public Action changeteamtimer(Handle timer, DataPack pack)
 		}
 		PrintToChatAll("%s%N \x01has joined team: %sRebels", REBELS, client, REBELS);
 
-		LogAction(client, -1, "%N has changed teams (Rebels). Client's cl_playermodel parameter adjusted to reflect new team.", client);
+		// LogAction(client, -1, "%N has changed teams (Rebels). Client's cl_playermodel parameter adjusted to reflect new team.", client);
 
 		return Plugin_Stop;
 	}
@@ -1130,12 +1097,7 @@ public Action changeteamtimer(Handle timer, DataPack pack)
 		if (!IsClientInGame(client))
 			return Plugin_Stop;
 
-		int	 rdm_mdl = GetRandomInt(0, 3);
-		char s_model[75];
-
-		IntToString(rdm_mdl, s_model, sizeof(s_model));
-
-		ClientCommand(client, "cl_playermodel models/%s", s_model);
+		ClientCommand(client, "cl_playermodel %s", g_sModels[GetRandomInt(0, 3)]);
 		SetEntityRenderColor(client, 255, 255, 255, 255);
 		if (GetConVarBool(gConVar.g_cplayermodelmsg))
 		{
@@ -1146,7 +1108,7 @@ public Action changeteamtimer(Handle timer, DataPack pack)
 		}
 		PrintToChatAll("%s%N \x01has joined team: %sCombine", COMBINE, client, COMBINE);
 
-		LogAction(client, -1, "%N has changed teams (Combine). Client's cl_playermodel parameter adjusted to reflect new team.", client);
+		// LogAction(client, -1, "%N has changed teams (Combine). Client's cl_playermodel parameter adjusted to reflect new team.", client);
 
 		return Plugin_Stop;
 	}
@@ -1158,7 +1120,7 @@ public Action changeteamtimer(Handle timer, DataPack pack)
 
 		PrintToChatAll("%s%N \x01has joined team: %sSpectators", SPEC, client, SPEC);
 
-		LogAction(client, -1, "%N has changed teams (Spectators). Client's cl_playermodel parameter adjusted to reflect new team.", client);
+		// LogAction(client, -1, "%N has changed teams (Spectators). Client's cl_playermodel parameter adjusted to reflect new team.", client);
 
 		return Plugin_Stop;
 	}
@@ -2245,6 +2207,9 @@ Action EntityOutput_SMGAmmo(const char[] output, int caller, int activator, floa
 
 Action OnWeaponSwitch(int client, int iWeapon)
 {
+	if (g_bReload)
+		return Plugin_Handled;
+
 	if (g_bSpawned[client])
 		return Plugin_Continue;
 
@@ -2316,6 +2281,9 @@ Action t_CheckAmmunitionAR2(Handle timer, DataPack dp)
 {
 	dp.Reset();
 	int client = dp.ReadCell();
+
+	if (g_bReload)
+		return Plugin_Handled;
 
 	if (!IsClientInGame(client) || IsClientObserver(client) || !IsPlayerAlive(client) || IsFakeClient(client))
 	{
@@ -2395,6 +2363,9 @@ Action t_CheckAmmunitionSMG(Handle timer, DataPack dp)
 	dp.Reset();
 
 	int client = dp.ReadCell();
+
+	if (g_bReload)
+		return Plugin_Handled;
 
 	if (!IsClientInGame(client) || IsClientObserver(client) || !IsPlayerAlive(client) || IsFakeClient(client))
 	{
