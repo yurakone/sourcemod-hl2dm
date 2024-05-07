@@ -1,14 +1,12 @@
 /******************************
 COMPILE OPTIONS
 ******************************/
-
 #pragma semicolon 1
 #pragma newdecls required
 
 /******************************
 NECESSARY INCLUDES
 ******************************/
-
 #include <sourcemod>
 #include <clientprefs>
 #include <sdktools>
@@ -43,7 +41,7 @@ static const char
 	PL_NAME[]		 = "HL2MP - Fixes & Enhancements",
 	PL_AUTHOR[]		 = "HL2MP Sourcemodders",
 	PL_DESCRIPTION[] = "Half-Life 2: Deathmatch Fixes & Enhancements",
-	PL_VERSION[]	 = "1.6.1";
+	PL_VERSION[]	 = "1.6.7";
 
 /******************************
 PLUGIN HANDLES
@@ -55,9 +53,6 @@ Handle g_hTeam[MAXPLAYERS + 1],
 	g_hCookiePlModel,
 	g_hCookieFootsteps,
 	g_hCookieSndFix,
-
-	g_hAR2Reload[MAXPLAYERS + 1],
-	g_hSMGReload[MAXPLAYERS + 1],
 
 	g_hWeapon_ShootPosition = INVALID_HANDLE;
 
@@ -80,12 +75,11 @@ bool gbLate,
 								gbMOTDExists,
 								gbTeamplay,
 
-								g_bHasAr2[MAXPLAYERS + 1]  = { false, ... },
-								g_bHooked[MAXPLAYERS + 1]  = { false, ... },
-								g_bSpawned[MAXPLAYERS + 1] = { false, ... },
-								g_bReload,
+								g_bAuthenticated[MAXPLAYERS + 1] = { false, ... },
 
-								g_bAuthenticated[MAXPLAYERS + 1] = { false, ... };
+								g_bRocketFired[MAXPLAYERS + 1]	 = { false, ... },
+								g_bAr2AltFire[MAXPLAYERS + 1]	 = { false, ... };
+
 /******************************
 PLUGIN CONVARS
 ******************************/
@@ -118,6 +112,12 @@ enum struct _gConVar
 	ConVar sm_hl2_footsteps;
 	ConVar mp_forcerespawn;
 	ConVar mp_restartgame;
+	ConVar sm_rpg_allow_wep_switch;
+	ConVar sm_ar2_allow_wep_switch;
+	ConVar fps_max_check;
+	ConVar fps_max_min_required;
+	ConVar fps_max_max_required;
+	ConVar sm_hud_stats;
 }
 
 _gConVar gConVar;
@@ -126,24 +126,8 @@ _gConVar gConVar;
 PLUGIN INTEGERS
 ******************************/
 int		 giZoom[MAXPLAYERS + 1],
-
-	hClientWeapon,
-
-	iCurrentPoolAmmoAR2,
-	iBulletsFiredAR2,
-	iMaxClipAR2,
-	iAmmoClipOneAR2,
-	iAmmoTypeAR2,
-	hClientWeaponAR2[MAXPLAYERS + 1],
-	iChangedWepsAR2[MAXPLAYERS + 1],
-
-	iChangedWepsSMG[MAXPLAYERS + 1],
-	hClientWeaponSMG[MAXPLAYERS + 1],
-	iMaxClipSMG,
-	iAmmoClipOneSMG,
-	iAmmoTypeSMG,
-	iCurrentPoolAmmoSMG,
-	iBulletsFiredSMG;
+	iRocket[MAXPLAYERS + 1],
+	iOrb[MAXPLAYERS + 1];
 
 /******************************
 PLUGIN STRINGMAPS
@@ -155,7 +139,7 @@ StringMap gmKills,
 /******************************
 PLUGIN STRINGS
 ******************************/
-char g_sFootstepSnds[52][75] = {
+char g_sFootstepSnds[56][75] = {
 	"player/footsteps/ladder1.wav",
 	"player/footsteps/ladder2.wav",
 	"player/footsteps/ladder3.wav",
@@ -164,6 +148,10 @@ char g_sFootstepSnds[52][75] = {
 	"player/footsteps/concrete2.wav",
 	"player/footsteps/concrete3.wav",
 	"player/footsteps/concrete4.wav",
+	"player/footsteps/chainlink1.wav",
+	"player/footsteps/chainlink2.wav",
+	"player/footsteps/chainlink3.wav",
+	"player/footsteps/chainlink4.wav",
 	"player/footsteps/dirt4.wav",
 	"player/footsteps/dirt2.wav",
 	"player/footsteps/dirt3.wav",
@@ -247,7 +235,7 @@ static char g_sModels[19][75] = {
 	"models/humans/group03/male_09.mdl"
 };
 
-static char g_sDisconnectReason[64], activeweaponclsname[30];
+static char g_sDisconnectReason[64];
 
 /******************************
 PLUGIN INFO
@@ -310,7 +298,6 @@ public void OnPluginStart()
 	CloseHandle(gameData);
 
 	AddNormalSoundHook(OnSound);
-	// AddNormalSoundHook(OnSoundWeps);
 
 	/*PRECACHE SOUNDS*/
 	for (int i = 1; i < sizeof(g_sWepSnds); i++)
@@ -363,7 +350,7 @@ public void OnPluginStart()
 	gConVar.g_cTimeleftR			 = CreateConVar("sm_timeleft_r", "255", "Red color intensity of the HUD's timeleft", 0, true, 0.0, true, 255.0);
 	gConVar.g_cTimeleftG			 = CreateConVar("sm_timeleft_g", "220", "Green color intensity of the HUD's timeleft", 0, true, 0.0, true, 255.0);
 	gConVar.g_cTimeleftB			 = CreateConVar("sm_timeleft_b", "0", "Blue color intensity of the HUD's timeleft", 0, true, 0.0, true, 255.0);
-	gConVar.g_cTimeleftI			 = CreateConVar("sm_timeleft_i", "255", "Blue color intensity of the HUD's timeleft", 0, true, 0.0, true, 255.0);
+	gConVar.g_cTimeleftI			 = CreateConVar("sm_timeleft_i", "255", "Amount of transparency of the HUD's timeleft", 0, true, 0.0, true, 255.0);
 
 	gConVar.fov_minfov				 = CreateConVar("fov_minfov", "70", "Minimum FOV allowed on server");
 	gConVar.fov_defaultfov			 = CreateConVar("fov_defaultfov", "90", "Default FOV of players on server");
@@ -372,6 +359,14 @@ public void OnPluginStart()
 	gConVar.sm_pluginmessages_check	 = CreateConVar("sm_pluginmessages_check", "1", "Check if a client's \"cl_showpluginmessages\" is set to 0 and displays a message to set it to 1", _, true, 0.0, true, 1.0);
 	gConVar.sm_missing_sounds_fix	 = CreateConVar("sm_missing_sounds_fix", "1", "Enable/Disable missing sounds fix", 0, true, 0.0, true, 1.0);
 	gConVar.sm_hl2_footsteps		 = CreateConVar("sm_hl2_footsteps", "1", "Enable/Disable HL2 footstep sounds", 0, true, 0.0, true, 1.0);
+	gConVar.sm_rpg_allow_wep_switch	 = CreateConVar("sm_rpg_allow_wep_switch", "0", "Whether players can switch guns after an active rocket has been fired", 0, true, 0.0, true, 1.0);
+	gConVar.sm_ar2_allow_wep_switch	 = CreateConVar("sm_ar2_allow_wep_switch", "0", "Whether players can switch guns after an active orb has been fired", 0, true, 0.0, true, 1.0);
+
+	gConVar.fps_max_check			 = CreateConVar("sm_fps_max_check", "1", "Enable/Disable the checking of client's fps_max value", 0, true, 0.0, true, 1.0);
+	gConVar.fps_max_min_required	 = CreateConVar("sm_fps_min", "60", "Minimum value that a client needs to set their fps_max at", 0, true, 10.0);
+	gConVar.fps_max_max_required	 = CreateConVar("sm_fps_max", "1000", "Maximum value that a client needs to set their fps_max at", 0, true, 60.0);
+
+	// gConVar.sm_hud_stats			 = CreateConVar("sm_hud_stats", "1", "Shows observed player's information on HUD", 0, true, 0.0, true, 1.0); // TODO: Show observed player's HUD elements
 
 	gConVar.g_cTeamplay				 = FindConVar("mp_teamplay");
 	gConVar.mp_falldamage			 = FindConVar("mp_falldamage");
@@ -380,31 +375,20 @@ public void OnPluginStart()
 	gConVar.sk_auto_reload_time		 = FindConVar("sk_auto_reload_time");	 // Tie the relaod time to this ConVar
 	gConVar.mp_restartgame			 = FindConVar("mp_restartgame");
 	gCvar							 = FindConVar("sv_footsteps");
-	
-	HookConVarChange(gConVar.mp_restartgame, RoundRestartCall);
 
 	/*HOOKING*/
-	HookUserMessage(GetUserMessageId("TextMsg"), dfltmsg, true);		 // To get rid of default engine messages
-	HookEvent("player_team", playerteam_callback, EventHookMode_Pre);	 // To fix death when names get changed through SM commands
-	HookEvent("player_disconnect", playerdisconnect_callback, EventHookMode_Pre);
-	HookEvent("player_connect_client", Event_PlayerConnect, EventHookMode_Pre);
-	HookEvent("player_spawn", event_spawn, EventHookMode_Pre);
+	HookUserMessage(GetUserMessageId("TextMsg"), dfltmsg, true);					 // To get rid of default engine messages
+	HookEvent("player_team", playerteam_callback, EventHookMode_Pre);				 // To fix death when names get changed through SM commands
+	HookEvent("player_disconnect", playerdisconnect_callback, EventHookMode_Pre);	 // Connect messages
+	HookEvent("player_connect_client", Event_PlayerConnect, EventHookMode_Pre);		 // Connect messages
 	HookEvent("player_death", event_death, EventHookMode_Pre);
 	HookEvent("server_cvar", Event_GameMessage, EventHookMode_Pre);
+	HookEvent("round_start", Event_RoundBegin, EventHookMode_Pre);
 	HookConVarChange(gConVar.g_cTeamHook, OnConVarChanged_pModelFix);
 	HookConVarChange(gConVar.g_cTeamplay, OnConVarChanged_Teamplay);
 	HookConVarChange(gConVar.g_cTimeleftEnable, OnConVarChanged_HudTimeleft);
 	HookUserMessage(GetUserMessageId("VGUIMenu"), UserMsg_VGUIMenu, false);
 	gConVar.sv_gravity.AddChangeHook(OnGravityChanged);
-
-	// We need to reload the weapons when they pick up ammo after a low or empty ammo reserve
-	HookEntityOutput("weapon_ar2", "OnPlayerPickup", EntityOutput_Ar2);
-	HookEntityOutput("item_ammo_ar2", "OnPlayerTouch", EntityOutput_Ar2Ammo);
-	HookEntityOutput("item_ammo_ar2_large", "OnPlayerTouch", EntityOutput_Ar2Ammo);
-
-	HookEntityOutput("weapon_smg1", "OnPlayerPickup", EntityOutput_SMG);
-	HookEntityOutput("item_ammo_smg1", "OnPlayerTouch", EntityOutput_SMGAmmo);
-	HookEntityOutput("item_ammo_smg1_large", "OnPlayerTouch", EntityOutput_SMGAmmo);
 
 	AddCommandListener(cmd_say, "say");
 	AddCommandListener(cmd_tsay, "say_team");
@@ -431,25 +415,6 @@ public void OnPluginStart()
 	}
 }
 
-public void RoundRestartCall(ConVar convar, const char[] oldValue, const char[] newValue)
-{
-	g_bReload = false;
-
-	for (int client = 1; client <= MaxClients; client++)
-	{
-		if (g_hAR2Reload[client] != null)
-		{
-			delete g_hAR2Reload[client];
-			g_bHasAr2[client] = false;
-		}
-
-		if (g_hSMGReload[client] != null)
-			delete g_hSMGReload[client];
-
-		g_bSpawned[client] = true;
-	}
-}
-
 public Action xfix_credits(int client, int args)
 {
 	if (!client)
@@ -463,7 +428,8 @@ public Action xfix_credits(int client, int args)
 	5) Peter Brev - Additional HL2MP fixes\n \
 	6) Sidez - Grenade glow edict fix\n \
 	7) Toizy - Jesus/T-Pose animation fix\n \
-	8) V952 - Shotgun lag compensation fix\n\n \
+	8) V952 - Shotgun lag compensation fix\n \
+	9) Xutaxkamay - Bullet fix\n\n \
 	xFix is a continuously updated plugin featuring more fixes as they become available!",
 					  PL_VERSION);
 
@@ -505,11 +471,31 @@ void q_PluginMessages(QueryCookie cookie, int client, ConVarQueryResult result, 
 	if (result != ConVarQuery_Okay)
 		return;
 
-	if (strcmp(cvarValue, "0") == 0)
+	if (strcmp(cvarValue, "0") == 0)	// Help player turn on plugin messages
 	{
 		PrintToChat(client, "\x01[SM] It looks like menu panels cannot be displayed for you. Please type \x04cl_showpluginmessages 1\x01 in your console.");
 		return;
 	}
+}
+
+void q_fpsmax(QueryCookie cookie, int client, ConVarQueryResult result, const char[] cvarName, const char[] cvarValue)
+{
+	if (result != ConVarQuery_Okay)
+	{
+		KickClient(client, "Client command query \"fps_max\" failed. Reconnect.");
+		return;
+	}
+
+	if (!IsClientInGame(client) || IsFakeClient(client))
+		return;
+
+	int cvar = StringToInt(cvarValue);
+
+	if (cvar < GetConVarInt(gConVar.fps_max_min_required) || cvar > GetConVarInt(gConVar.fps_max_max_required))
+		KickClient(client, "This server requires your \"fps_max\" value to be set between %d and %d. Your value: %d",
+				   GetConVarInt(gConVar.fps_max_min_required), GetConVarInt(gConVar.fps_max_max_required), cvar);
+
+	return;
 }
 
 public void OnMapStart()
@@ -518,6 +504,14 @@ public void OnMapStart()
 	{
 		PrecacheSound(g_sWepSnds[i]);
 	}
+
+	if (GetConVarInt(gConVar.fps_max_check) == 1)
+		if (GetConVarInt(gConVar.fps_max_min_required) > GetConVarInt(gConVar.fps_max_max_required))	// in theory, this shouldn't be required, but this is just a safety net
+		{
+			// set back to default
+			SetConVarInt(gConVar.fps_max_min_required, 10);
+			SetConVarInt(gConVar.fps_max_max_required, 60);
+		}
 
 	CreateTimer(30.0, CheckAngles, _, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
 
@@ -533,74 +527,33 @@ public void OnMapStart()
 
 public void OnMapEnd()
 {
-	for (int client = 1; client <= MaxClients; client++)
-	{
-		if (client < 1 || client > MaxClients || !IsClientInGame(client) || IsFakeClient(client))
-			continue;
-
-		if (g_hAR2Reload[client] != null)
-			delete g_hAR2Reload[client];
-
-		if (g_hSMGReload[client] != null)
-			delete g_hSMGReload[client];
-	}
-
 	gmKills.Clear();
 	gmDeaths.Clear();
 }
 
-public Action Event_RoundStart(Handle hEvent, const char[] sEvent, bool bDontBroadcast)
+public Action Event_RoundBegin(Event event, const char[] name, bool dontBroadcast)
 {
 	gmTeams.Clear();
 	gmKills.Clear();
 	gmDeaths.Clear();
 
-	g_bReload = true;
-
-	return Plugin_Continue;
-}
-
-Action event_spawn(Event event, const char[] name, bool dontBroadcast)
-{
-	int client = GetClientOfUserId(GetEventInt(event, "userid"));
-
-	if (!g_bHooked[client])
-		SDKHook(client, SDKHook_WeaponSwitchPost, OnWeaponSwitch);
-
-	if (g_hAR2Reload[client] != null)
+	for (int client = 1; client <= MaxClients; client++)
 	{
-		delete g_hAR2Reload[client];
-		g_bHasAr2[client] = false;
+		if (client < 1 || client > MaxClients || !IsClientInGame(client) || IsFakeClient(client))
+			continue;
+
+		if (IsClientObserver(client))
+		{
+			Client_SetHideHud(client, HIDEHUD_HEALTH);
+		}
 	}
 
-	if (g_hSMGReload[client] != null)
-		delete g_hSMGReload[client];
-
-	g_bHasAr2[client] = false;	  // Set it back to false on (re)spawn
-	RequestFrame(f_playerspawned, client);
-
 	return Plugin_Continue;
-}
-
-void f_playerspawned(int client)
-{
-	g_bSpawned[client] = false;
 }
 
 Action event_death(Event event, const char[] name, bool dontBroadcast)
 {
 	int client = GetClientOfUserId(GetEventInt(event, "userid"));
-
-	if (g_hAR2Reload[client] != null)
-	{
-		delete g_hAR2Reload[client];
-		g_bHasAr2[client] = false;
-	}
-
-	if (g_hSMGReload[client] != null)
-		delete g_hSMGReload[client];
-
-	g_bSpawned[client] = true;
 
 	if (GetConVarInt(gConVar.mp_forcerespawn) > 0)
 		CreateTimer(3.0, t_forcerespawn, client, TIMER_FLAG_NO_MAPCHANGE);	  // mp_forcerespawn bypass fix
@@ -620,6 +573,12 @@ public void OnClientPutInServer(int iClient)
 {
 	if (GetConVarBool(gConVar.sm_pluginmessages_check))
 		QueryClientConVar(iClient, "cl_showpluginmessages", q_PluginMessages);
+
+	if (GetConVarBool(gConVar.fps_max_check))
+		QueryClientConVar(iClient, "fps_max", q_fpsmax);
+
+	iRocket[iClient] = 0;
+	iOrb[iClient]	 = 0;
 
 	CreateTimer(60.0, t_AuthCheck, iClient, TIMER_FLAG_NO_MAPCHANGE);
 
@@ -650,12 +609,6 @@ public void OnClientPutInServer(int iClient)
 			CreateTimer(0.5, T_BlockConnectMOTD, iClient, TIMER_FLAG_NO_MAPCHANGE);
 		}
 	}
-
-	g_bHasAr2[iClient]		 = false;	 // No reason to launch timers if no AR2 is in a player's inventory (this assumes player spawns with default equipment!)
-	g_bSpawned[iClient]		 = true;
-	iChangedWepsAR2[iClient] = 2;
-	iChangedWepsSMG[iClient] = 2;
-	CreateTimer(0.1, t_sdkhookwep, iClient, TIMER_FLAG_NO_MAPCHANGE);	 // Timer needed in case players join and are switched to spec
 }
 
 public void OnClientPostAdminCheck(int client)
@@ -695,13 +648,6 @@ Action t_AuthCheck(Handle timer, int client)
 		LogMessage("[SM] \"%L\" kicked. Unverified SteamID.");
 	}
 
-	return Plugin_Stop;
-}
-
-Action t_sdkhookwep(Handle timer, int client)
-{
-	if (!IsClientObserver(client))
-		SDKHook(client, SDKHook_WeaponSwitchPost, OnWeaponSwitch);
 	return Plugin_Stop;
 }
 
@@ -781,13 +727,16 @@ public Action OnSound(int iClients[MAXPLAYERS], int &iNumClients, char sSample[P
 		ang[0] = 90.0;
 		ang[1] = 0.0;
 		ang[2] = 0.0;
+
 		char   surfname[128];
+
 		Handle trace = TR_TraceRayFilterEx(pos, ang, MASK_SHOT | MASK_SHOT_HULL | MASK_WATER, RayType_Infinite, TraceEntityFilter, iEntity);
 		// int	   surfflags = TR_GetSurfaceFlags(trace);
 		TR_GetSurfaceName(trace, surfname, sizeof(surfname));
-		// int surfprops = TR_GetSurfaceProps(trace);
+		int surfprops = TR_GetSurfaceProps(trace);
+		// int surfdisp  = TR_GetDisplacementFlags(trace);
 		CloseHandle(trace);
-		// PrintToChat(iEntity, "TRMaterial Flags %i Props %i Name %s", surfflags, surfprops, surfname);
+		// PrintToChat(iEntity, "TRMaterial Flags %i Props %i Name %s Disp: %i", surfflags, surfprops, surfname, surfdisp);
 
 		if (GetConVarInt(gConVar.sm_hl2_footsteps) == 1)
 		{
@@ -818,12 +767,12 @@ public Action OnSound(int iClients[MAXPLAYERS], int &iNumClients, char sSample[P
 					Format(sSample, sizeof(sSample), "player/footsteps/metalgrate%i.wav", GetRandomInt(1, 4));
 				}
 
-				else if (StrContains(surfname, "metal", false) != -1)
+				else if (StrContains(surfname, "metal", false) != -1 || surfprops == 3 || surfprops == 8)
 				{
 					Format(sSample, sizeof(sSample), "player/footsteps/metal%i.wav", GetRandomInt(1, 4));
 				}
 
-				else if (StrContains(surfname, "mud", false) != -1)
+				else if (StrContains(surfname, "mud", false) != -1 || surfprops == 10)
 				{
 					Format(sSample, sizeof(sSample), "player/footsteps/mud%i.wav", GetRandomInt(1, 4));
 				}
@@ -833,12 +782,12 @@ public Action OnSound(int iClients[MAXPLAYERS], int &iNumClients, char sSample[P
 					Format(sSample, sizeof(sSample), "player/footsteps/sand%i.wav", GetRandomInt(1, 4));
 				}
 
-				else if (StrContains(surfname, "wood", false) != -1)
+				else if (StrContains(surfname, "wood", false) != -1 || surfprops == 14 || surfprops == 19)
 				{
 					Format(sSample, sizeof(sSample), "player/footsteps/wood%i.wav", GetRandomInt(1, 4));
 				}
 
-				else if (StrContains(surfname, "dirt", false) != -1)
+				else if (StrContains(surfname, "dirt", false) != -1 || StrContains(surfname, "snow", false) != -1 || surfprops == 9 || surfprops == 44)
 				{
 					Format(sSample, sizeof(sSample), "player/footsteps/dirt%i.wav", GetRandomInt(1, 4));
 				}
@@ -861,6 +810,11 @@ public Action OnSound(int iClients[MAXPLAYERS], int &iNumClients, char sSample[P
 				else if (StrContains(surfname, "plaster", false) != -1)
 				{
 					Format(sSample, sizeof(sSample), "physics/plaster/drywall_footstep%i.wav", GetRandomInt(1, 4));
+				}
+
+				else if (surfprops == 37)
+				{
+					Format(sSample, sizeof(sSample), "player/footsteps/chainlink%i.wav", GetRandomInt(1, 4));
 				}
 
 				else
@@ -943,74 +897,6 @@ public Action OnSound(int iClients[MAXPLAYERS], int &iNumClients, char sSample[P
 	return Plugin_Changed;
 }
 
-/*public Action OnSoundWeps(int iClients[MAXPLAYERS], int &iNumClients, char sSample[PLATFORM_MAX_PATH], int &iEntity, int &iChannel, float &fVolume, int &iLevel, int &iPitch, int &iFlags, char sEntry[PLATFORM_MAX_PATH], int &seed)
-{
-	if (iEntity < 1 || iEntity > MaxClients || !IsClientInGame(iEntity))
-		return Plugin_Continue;
-
-	if (GetConVarInt(gConVar.sm_missing_sounds_fix) == 1)
-	{
-		if (!g_bSndFix[iEntity])
-		{
-			if (strcmp(sSample, "weapons/crossbow/bolt_load1.wav", false) == 0 || strcmp(sSample, "weapons/crossbow/bolt_load2.wav", false) == 0)
-			{
-				Format(sSample, sizeof(sSample), "weapons/crossbow/bolt_load%i.wav", GetRandomInt(1, 2));
-			}
-
-			if (strcmp(sSample, "weapons/physcannon/physcannon_tooheavy.wav", false) == 0)
-			{
-				Format(sSample, sizeof(sSample), "weapons/physcannon/physcannon_tooheavy.wav");
-			}
-
-			if (strcmp(sSample, ")weapons/physcannon/physcannon_claws_close.wav", false) == 0)	  // No idea why it needs a closed bracket here.
-			{
-				Format(sSample, sizeof(sSample), "weapons/physcannon/physcannon_claws_close.wav");
-			}
-
-			if (strcmp(sSample, ")weapons/physcannon/physcannon_claws_open.wav", false) == 0)	 // Same thing here.
-			{
-				Format(sSample, sizeof(sSample), "weapons/physcannon/physcannon_claws_close.wav");
-			}
-
-			if (strcmp(sSample, ")weapons/physcannon/physcannon_pickup.wav", false) == 0)	 // Same thing here.
-			{
-				Format(sSample, sizeof(sSample), "weapons/physcannon/physcannon_pickup.wav");
-			}
-
-			if (StrContains(sSample, ")weapons/physcannon/physcannon_drop.wav", false) != -1)
-			{
-				Format(sSample, sizeof(sSample), "weapons/physcannon/physcannon_drop.wav");
-			}
-
-			if (strcmp(sSample, "weapons/physcannon/hold_loop.wav", false) == 0)	// This one seems broken or not included in the sound hook. I will leave it in there in case Sourcemod gets updated with it working.
-			{
-				Format(sSample, sizeof(sSample), "weapons/physcannon/hold_loop.wav");
-			}
-
-			if (strcmp(sSample, "weapons/slam/throw.wav", false) == 0)
-			{
-				Format(sSample, sizeof(sSample), "weapons/slam/throw.wav");
-			}
-		}
-		else return Plugin_Continue;
-	}
-	else return Plugin_Continue;
-
-	if (strcmp(sSample, "weapons/physcannon/physcannon_tooheavy.wav", false) != 0 && strcmp(sSample, "weapons/slam/throw.wav", false) != 0 && strcmp(sSample, "weapons/crossbow/bolt_load1.wav", false) != 0 && strcmp(sSample, "weapons/crossbow/bolt_load2.wav", false) != 0 && strcmp(sSample, "weapons/physcannon/physcannon_claws_close.wav", false) != 0 && strcmp(sSample, "weapons/physcannon/physcannon_claws_open.wav", false) != 0 && strcmp(sSample, "weapons/physcannon/physcannon_pickup.wav", false) != 0 && strcmp(sSample, "weapons/physcannon/physcannon_drop.wav", false) != 0 && strcmp(sSample, "weapons/physcannon/hold_loop.wav", false) != 0) {
-		return Plugin_Continue;
-	}
-
-	for (int iClient = 1; iClient <= MaxClients; iClient++)
-	{
-		if (!IsClientConnected(iClient) || !IsClientInGame(iClient))
-			continue;
-
-		EmitSoundToClient(iClient, sSample, iEntity, iChannel, iLevel, iFlags, fVolume * gfVolume, iPitch);
-	}
-
-	return Plugin_Changed;
-}*/
-
 void ReplicateTo(int iClient, const char[] sValue)
 {
 	if (IsClientInGame(iClient) && !IsFakeClient(iClient))
@@ -1087,8 +973,6 @@ public Action changeteamtimer(Handle timer, DataPack pack)
 		}
 		PrintToChatAll("%s%N \x01has joined team: %sRebels", REBELS, client, REBELS);
 
-		// LogAction(client, -1, "%N has changed teams (Rebels). Client's cl_playermodel parameter adjusted to reflect new team.", client);
-
 		return Plugin_Stop;
 	}
 
@@ -1108,8 +992,6 @@ public Action changeteamtimer(Handle timer, DataPack pack)
 		}
 		PrintToChatAll("%s%N \x01has joined team: %sCombine", COMBINE, client, COMBINE);
 
-		// LogAction(client, -1, "%N has changed teams (Combine). Client's cl_playermodel parameter adjusted to reflect new team.", client);
-
 		return Plugin_Stop;
 	}
 
@@ -1120,8 +1002,6 @@ public Action changeteamtimer(Handle timer, DataPack pack)
 
 		PrintToChatAll("%s%N \x01has joined team: %sSpectators", SPEC, client, SPEC);
 
-		// LogAction(client, -1, "%N has changed teams (Spectators). Client's cl_playermodel parameter adjusted to reflect new team.", client);
-
 		return Plugin_Stop;
 	}
 
@@ -1131,8 +1011,6 @@ public Action changeteamtimer(Handle timer, DataPack pack)
 			return Plugin_Stop;
 
 		PrintToChatAll("%s%N \x01has joined team: %sPlayers", UNASSIGNED, client, UNASSIGNED);
-
-		LogAction(client, -1, "%N has changed teams (Players). Client's cl_playermodel parameter adjusted to reflect new team.", client);
 
 		return Plugin_Stop;
 	}
@@ -1217,6 +1095,7 @@ public void OnConVarChanged_Teamplay(ConVar convar, const char[] oldValue, const
 	if (FindPluginByFile("xms.smx"))
 		return;
 
+	// Reload the map if teamplay is enabled
 	for (int i; i <= MaxClients; i++)
 	{
 		if (i == 0)
@@ -1298,17 +1177,6 @@ public bool OnClientConnect(int client)
 public void OnClientDisconnect(int client)
 {
 	g_bAuthenticated[client] = false;
-
-	if (g_hAR2Reload[client] != null)
-	{
-		delete g_hAR2Reload[client];
-		g_bHasAr2[client] = false;
-	}
-
-	if (g_hSMGReload[client] != null)
-		delete g_hSMGReload[client];
-
-	g_bSpawned[client] = true;
 
 	if (GetConVarBool(gConVar.g_cEnable))
 	{
@@ -1523,13 +1391,33 @@ void RequestFOV(int iClient, int iFov)
 }
 
 /******************************
-SPEC FIX
+SPEC & WEP FIX
 ******************************/
 public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fVel[3], float fAngles[3], int &iWeapon)
 {
 	if (!IsClientConnected(iClient) || !IsClientInGame(iClient) || IsFakeClient(iClient))
 	{
 		return Plugin_Continue;
+	}
+
+	int iClientWeapon = GetEntPropEnt(iClient, Prop_Send, "m_hActiveWeapon");
+
+	if (iClientWeapon != -1 && IsValidEntity(iClientWeapon))
+	{
+		char wpncls[32];
+		GetEntityClassname(iClientWeapon, wpncls, sizeof(wpncls));
+
+		if (strcmp(wpncls, "weapon_ar2", false) == 0 && (iButtons & IN_ATTACK2))
+		{
+			int iSecondaryAmmo = GetEntProp(iClientWeapon, Prop_Send, "m_iSecondaryAmmoType");
+			int iSecAmmoPool   = GetEntProp(iClient, Prop_Data, "m_iAmmo", _, iSecondaryAmmo);
+
+			if (iSecAmmoPool > 0)
+			{
+				g_bAr2AltFire[iClient] = true;
+				// CreateTimer(0.5, t_ar2hook, iClient, TIMER_FLAG_NO_MAPCHANGE);
+			}
+		}
 	}
 
 	GetClientEyePosition(iClient, g_vecOldWeaponShootPos[iClient]);
@@ -1552,18 +1440,25 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 		if (iMode == SPECMODE_ENEMYVIEW || iTarget <= 0 || !IsClientInGame(iTarget))
 		{
 			SetEntProp(iClient, Prop_Data, "m_iObserverMode", SPECMODE_FREELOOK);
+			Client_SetHideHud(iClient, HIDEHUD_CROSSHAIR);	  // if not spectating someone, hide the crosshair
 		}
 
 		// fix bug where spectator can't move while free-looking >
 		if (iMode == SPECMODE_FREELOOK)
 		{
 			SetEntityMoveType(iClient, MOVETYPE_NOCLIP);
+			Client_SetHideHud(iClient, HIDEHUD_CROSSHAIR);	  // Crosshair is useless if not in first person
+		}
+
+		if (iMode == SPECMODE_FIRSTPERSON)
+		{
+			Client_SetHideHud(iClient, 2056);	 // Make sure the HUD does not show up when going back first person
 		}
 
 		// block spectator sprinting >
 		iButtons &= ~IN_SPEED;
 
-		// also fixes 1hp bug >
+		// also fixes 1hp bug > (only works if no mp_restartgame, fixed above)
 		return Plugin_Changed;
 	}
 
@@ -1572,6 +1467,11 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 		// no use when dead >
 		iButtons &= ~IN_USE;
 		return Plugin_Changed;
+	}
+
+	if ((iButtons & IN_SPEED) && !IsPlayerAlive(iClient))	 // No need to sprint if dead
+	{
+		iButtons ^= IN_SPEED;
 	}
 
 	// shotgun altfire lagcomp fix by V952 >
@@ -1735,11 +1635,8 @@ public Action Hook_OnTakeDamage(int iClient, int &iAttacker, int &iInflictor, fl
 		// (typically this is removed by competitive configs, which provides a significant advantage and cannot be prevented)
 		iDamageType = DMG_GENERIC;
 	}
-	else {
-		return Plugin_Continue;
-	}
 
-	if (iDamageType & DMG_FALL)
+	else if (iDamageType & DMG_FALL)
 	{
 		if (GetConVarInt(gConVar.mp_falldamage) == -1)
 			return Plugin_Handled;
@@ -1759,11 +1656,18 @@ public Action Hook_OnTakeDamage(int iClient, int &iAttacker, int &iInflictor, fl
 			fDamage = gConVar.mp_falldamage.FloatValue;	   // Fix mp_falldamage value not having any effect >
 	}
 
+	else {
+		return Plugin_Continue;
+	}
+
 	return Plugin_Changed;
 }
 
 public Action Hook_WeaponCanSwitchTo(int iClient, int iWeapon)
 {
+	if (g_bRocketFired[iClient] || g_bAr2AltFire[iClient])
+		return Plugin_Handled;
+
 	// Hands animation fix by toizy >
 	SetEntityFlags(iClient, GetEntityFlags(iClient) | FL_ONGROUND);
 
@@ -1778,7 +1682,55 @@ public void OnEntityCreated(int iEntity, const char[] sEntity)
 		RequestFrame(GetSpriteData, EntIndexToEntRef(iEntity));
 	}
 
+	if (GetConVarInt(gConVar.sm_rpg_allow_wep_switch) == 0)
+	{
+		if (StrEqual(sEntity, "rpg_missile"))
+		{
+			SDKHook(iEntity, SDKHook_Spawn, SDK_OnEntitySpawn);
+		}
+	}
+
+	if (GetConVarInt(gConVar.sm_ar2_allow_wep_switch) == 0)
+	{
+		if (StrEqual(sEntity, "prop_combine_ball"))
+		{
+			for (int client = 1; client <= MaxClients; client++)
+			{
+				g_bAr2AltFire[client] = false;
+			}
+		}
+	}
+
 	return;
+}
+
+public Action SDK_OnEntitySpawn(int iEntity)
+{
+	for (int client = 1; client <= MaxClients; client++)
+	{
+		if (client < 1 || client > MaxClients || !IsClientInGame(client) || IsFakeClient(client))
+			continue;
+
+		iRocket[client]		   = iEntity;
+		g_bRocketFired[client] = true;
+	}
+
+	return Plugin_Continue;
+}
+
+public void OnEntityDestroyed(int iEntity)
+{
+	for (int client = 1; client <= MaxClients; client++)
+	{
+		if (client < 1 || client > MaxClients || !IsClientInGame(client) || IsFakeClient(client))
+			continue;
+
+		if (iRocket[client] == iEntity)
+		{
+			g_bRocketFired[client] = false;
+			SDKUnhook(iEntity, SDKHook_Spawn, SDK_OnEntitySpawn);
+		}
+	}
 }
 
 void GetSpriteData(int iRef)
@@ -1993,8 +1945,6 @@ public Action HandleUse(int client, const char[] cmd, int argc)
 	return Plugin_Continue;
 }
 
-// Action OnPlayerRunCmd()
-
 /******************************
 BAD SETLOCALANGLES FIX by Grey83
 ******************************/
@@ -2034,406 +1984,6 @@ public Action CheckAngles(Handle timer)
 	return Plugin_Continue;
 }
 
-/******************************
-BACKPACK RELOAD
-******************************/
-Action EntityOutput_Ar2(const char[] output, int caller, int activator, float delay)
-{
-	if (activator > 0 && activator <= MaxClients && IsClientInGame(activator) && IsPlayerAlive(activator))
-	{
-		if (g_bSpawned[activator])
-			return Plugin_Continue;
-
-		hClientWeapon = GetEntPropEnt(activator, Prop_Send, "m_hActiveWeapon");
-
-		if (hClientWeapon != -1)
-		{
-			GetEntityClassname(hClientWeapon, activeweaponclsname, sizeof(activeweaponclsname));
-			if (g_bHasAr2[activator])
-			{
-				if (hClientWeaponAR2[activator] == 0)
-					return Plugin_Continue;
-
-				iAmmoClipOneAR2 = GetEntProp(hClientWeaponAR2[activator], Prop_Send, "m_iClip1");
-				iAmmoTypeAR2	= GetEntProp(hClientWeaponAR2[activator], Prop_Send, "m_iPrimaryAmmoType");
-
-				if (hClientWeaponAR2[activator] == 0)
-					return Plugin_Continue;
-				else if (iAmmoClipOneAR2 == 30)
-					return Plugin_Continue;
-
-				DataPack dp;
-				if (strcmp(activeweaponclsname, "weapon_ar2", false) != 0 && g_hAR2Reload[activator] == null)
-				{
-					g_hAR2Reload[activator] = CreateDataTimer(GetConVarFloat(gConVar.sk_auto_reload_time), t_CheckAmmunitionAR2, dp, TIMER_FLAG_NO_MAPCHANGE);
-					dp.WriteCell(activator);
-				}
-
-				else
-					return Plugin_Continue;
-			}
-
-			g_bHasAr2[activator] = true;	// AR2 weapon picked up, we now have it in our inventory
-		}
-	}
-
-	return Plugin_Continue;
-}
-
-Action EntityOutput_Ar2Ammo(const char[] output, int caller, int activator, float delay)
-{
-	if (activator > 0 && activator <= MaxClients && IsClientInGame(activator) && IsPlayerAlive(activator))
-	{
-		if (g_bSpawned[activator])
-			return Plugin_Continue;
-
-		hClientWeapon = GetEntPropEnt(activator, Prop_Send, "m_hActiveWeapon");
-
-		if (hClientWeapon != -1)
-		{
-			GetEntityClassname(hClientWeapon, activeweaponclsname, sizeof(activeweaponclsname));
-
-			if (g_bHasAr2[activator])
-			{
-				if (hClientWeaponAR2[activator] == 0)
-					return Plugin_Continue;
-
-				iAmmoClipOneAR2 = GetEntProp(hClientWeaponAR2[activator], Prop_Send, "m_iClip1");
-				iAmmoTypeAR2	= GetEntProp(hClientWeaponAR2[activator], Prop_Send, "m_iPrimaryAmmoType");
-
-				if (hClientWeaponAR2[activator] == 0)
-					return Plugin_Continue;
-				else if (iAmmoClipOneAR2 == 30)
-					return Plugin_Continue;
-
-				DataPack dp;
-				if (strcmp(activeweaponclsname, "weapon_ar2", false) != 0 && g_hAR2Reload[activator] == null)
-				{
-					g_hAR2Reload[activator] = CreateDataTimer(GetConVarFloat(gConVar.sk_auto_reload_time), t_CheckAmmunitionAR2, dp, TIMER_FLAG_NO_MAPCHANGE);
-					dp.WriteCell(activator);
-				}
-
-				else
-					return Plugin_Continue;
-			}
-		}
-	}
-	else return Plugin_Continue;
-
-	return Plugin_Continue;
-}
-
-Action EntityOutput_SMG(const char[] output, int caller, int activator, float delay)
-{
-	if (activator > 0 && activator <= MaxClients && IsClientInGame(activator) && IsPlayerAlive(activator))
-	{
-		if (g_bSpawned[activator])
-			return Plugin_Continue;
-
-		hClientWeapon = GetEntPropEnt(activator, Prop_Send, "m_hActiveWeapon");
-
-		if (hClientWeapon != -1)
-		{
-			GetEntityClassname(hClientWeapon, activeweaponclsname, sizeof(activeweaponclsname));
-
-			if (hClientWeaponSMG[activator] == 0)
-				return Plugin_Continue;
-
-			iAmmoClipOneSMG = GetEntProp(hClientWeaponSMG[activator], Prop_Send, "m_iClip1");
-			iAmmoTypeSMG	= GetEntProp(hClientWeaponSMG[activator], Prop_Send, "m_iPrimaryAmmoType");
-
-			// PrintToServer("%d", iAmmoClipOneSMG);
-
-			if (hClientWeaponSMG[activator] == 0)
-				return Plugin_Continue;
-			else if (iAmmoClipOneSMG == 45)
-				return Plugin_Continue;
-
-			DataPack dp;
-			if (strcmp(activeweaponclsname, "weapon_smg1", false) != 0 && g_hSMGReload[activator] == null)
-			{
-				g_hSMGReload[activator] = CreateDataTimer(GetConVarFloat(gConVar.sk_auto_reload_time), t_CheckAmmunitionSMG, dp, TIMER_FLAG_NO_MAPCHANGE);
-				dp.WriteCell(activator);
-			}
-
-			else
-				return Plugin_Continue;
-		}
-	}
-	else return Plugin_Continue;
-
-	return Plugin_Continue;
-}
-
-Action EntityOutput_SMGAmmo(const char[] output, int caller, int activator, float delay)
-{
-	if (activator > 0 && activator <= MaxClients && IsClientInGame(activator) && IsPlayerAlive(activator))
-	{
-		if (g_bSpawned[activator])
-			return Plugin_Continue;
-
-		hClientWeapon = GetEntPropEnt(activator, Prop_Send, "m_hActiveWeapon");
-
-		if (hClientWeapon != -1)
-		{
-			GetEntityClassname(hClientWeapon, activeweaponclsname, sizeof(activeweaponclsname));
-
-			if (hClientWeaponSMG[activator] == 0)
-				return Plugin_Continue;
-
-			iAmmoClipOneSMG = GetEntProp(hClientWeaponSMG[activator], Prop_Send, "m_iClip1");
-			iAmmoTypeSMG	= GetEntProp(hClientWeaponSMG[activator], Prop_Send, "m_iPrimaryAmmoType");
-
-			if (hClientWeaponSMG[activator] == 0)
-				return Plugin_Continue;
-			else if (iAmmoClipOneSMG == 45)
-				return Plugin_Continue;
-
-			DataPack dp;
-			if (strcmp(activeweaponclsname, "weapon_smg1", false) != 0 && g_hSMGReload[activator] == null)
-			{
-				g_hSMGReload[activator] = CreateDataTimer(GetConVarFloat(gConVar.sk_auto_reload_time), t_CheckAmmunitionSMG, dp, TIMER_FLAG_NO_MAPCHANGE);
-				dp.WriteCell(activator);
-			}
-
-			else
-				return Plugin_Continue;
-		}
-	}
-	else return Plugin_Continue;
-
-	return Plugin_Continue;
-}
-
-Action OnWeaponSwitch(int client, int iWeapon)
-{
-	if (g_bReload)
-		return Plugin_Handled;
-
-	if (g_bSpawned[client])
-		return Plugin_Continue;
-
-	hClientWeapon = GetEntPropEnt(client, Prop_Send, "m_hActiveWeapon");
-
-	if (hClientWeapon != -1)
-	{
-		GetEntityClassname(hClientWeapon, activeweaponclsname, sizeof(activeweaponclsname));
-
-		if (strcmp(activeweaponclsname, "weapon_ar2", false) == 0)
-		{
-			// DataPack dp;
-			iChangedWepsAR2[client]	 = 0;
-			hClientWeaponAR2[client] = hClientWeapon;
-
-			if (g_hAR2Reload[client] != null)
-			{
-				delete g_hAR2Reload[client];
-			}
-		}
-
-		if (strcmp(activeweaponclsname, "weapon_smg1", false) == 0)
-		{
-			// DataPack dp;
-			iChangedWepsSMG[client]	 = 0;
-			hClientWeaponSMG[client] = hClientWeapon;
-
-			if (g_hSMGReload[client] != null)
-			{
-				delete g_hSMGReload[client];
-			}
-		}
-
-		if (strcmp(activeweaponclsname, "weapon_ar2", false) != 0)
-		{
-			iChangedWepsAR2[client]++;
-
-			if (iChangedWepsAR2[client] == 1)
-			{
-				if (g_hAR2Reload[client] == null)
-				{
-					DataPack dp;
-					g_hAR2Reload[client] = CreateDataTimer(GetConVarFloat(gConVar.sk_auto_reload_time), t_CheckAmmunitionAR2, dp, TIMER_FLAG_NO_MAPCHANGE);
-					dp.WriteCell(client);
-				}
-			}
-		}
-
-		if (strcmp(activeweaponclsname, "weapon_smg1", false) != 0)
-		{
-			iChangedWepsSMG[client]++;
-
-			if (iChangedWepsSMG[client] == 1)
-			{
-				if (g_hSMGReload[client] == null)
-				{
-					DataPack dp;
-					g_hSMGReload[client] = CreateDataTimer(GetConVarFloat(gConVar.sk_auto_reload_time), t_CheckAmmunitionSMG, dp, TIMER_FLAG_NO_MAPCHANGE);
-					dp.WriteCell(client);
-				}
-			}
-		}
-	}
-
-	return Plugin_Continue;
-}
-
-Action t_CheckAmmunitionAR2(Handle timer, DataPack dp)
-{
-	dp.Reset();
-	int client = dp.ReadCell();
-
-	if (g_bReload)
-		return Plugin_Handled;
-
-	if (!IsClientInGame(client) || IsClientObserver(client) || !IsPlayerAlive(client) || IsFakeClient(client))
-	{
-		g_hAR2Reload[client] = null;
-		return Plugin_Stop;
-	}
-
-	if (hClientWeaponAR2[client] == 0)
-	{
-		g_hAR2Reload[client] = null;
-		return Plugin_Stop;
-	}
-
-	if (!g_bHasAr2[client])
-	{
-		g_hAR2Reload[client] = null;
-		return Plugin_Continue;
-	}
-
-	hClientWeapon = GetEntPropEnt(client, Prop_Send, "m_hActiveWeapon");
-
-	if (hClientWeapon != -1)
-	{
-		if (strcmp(activeweaponclsname, "weapon_ar2", false) == 0)
-		{
-			g_hAR2Reload[client] = null;
-			return Plugin_Stop;
-		}
-
-		iMaxClipAR2		= 30;
-		iAmmoClipOneAR2 = GetEntProp(hClientWeaponAR2[client], Prop_Send, "m_iClip1");
-		iAmmoTypeAR2	= GetEntProp(hClientWeaponAR2[client], Prop_Send, "m_iPrimaryAmmoType");
-
-		if (iAmmoClipOneAR2 == -1 || iAmmoTypeAR2 == -1)
-		{
-			g_hAR2Reload[client] = null;
-			return Plugin_Stop;
-		}
-
-		if (iAmmoTypeAR2 != -1)
-		{
-			iCurrentPoolAmmoAR2 = GetEntProp(client, Prop_Data, "m_iAmmo", _, 1);
-
-			if (iAmmoClipOneAR2 == 30)
-			{
-				g_hAR2Reload[client] = null;
-				return Plugin_Stop;
-			}
-
-			iBulletsFiredAR2 = iMaxClipAR2 - iAmmoClipOneAR2;
-
-			if ((iCurrentPoolAmmoAR2 - iBulletsFiredAR2) <= 0)	  // 10 - 12 = -2
-			{
-				SetEntProp(hClientWeaponAR2[client], Prop_Data, "m_iClip1", iAmmoClipOneAR2 + iCurrentPoolAmmoAR2);
-				SetEntProp(client, Prop_Data, "m_iAmmo", 0, _, 1);
-
-				g_hAR2Reload[client] = null;
-				return Plugin_Stop;
-			}
-
-			else
-			{
-				SetEntProp(hClientWeaponAR2[client], Prop_Data, "m_iClip1", 30);
-				SetEntProp(client, Prop_Data, "m_iAmmo", iCurrentPoolAmmoAR2 - iBulletsFiredAR2, _, 1);
-				g_hAR2Reload[client] = null;
-				return Plugin_Stop;
-			}
-		}
-	}
-
-	g_hAR2Reload[client] = null;
-	return Plugin_Stop;
-}
-
-Action t_CheckAmmunitionSMG(Handle timer, DataPack dp)
-{
-	dp.Reset();
-
-	int client = dp.ReadCell();
-
-	if (g_bReload)
-		return Plugin_Handled;
-
-	if (!IsClientInGame(client) || IsClientObserver(client) || !IsPlayerAlive(client) || IsFakeClient(client))
-	{
-		g_hSMGReload[client] = null;
-		return Plugin_Stop;
-	}
-
-	if (hClientWeaponSMG[client] == 0)
-	{
-		g_hSMGReload[client] = null;
-		return Plugin_Stop;
-	}
-
-	hClientWeapon = GetEntPropEnt(client, Prop_Send, "m_hActiveWeapon");
-
-	if (hClientWeapon != -1)
-	{
-		if (strcmp(activeweaponclsname, "weapon_smg1", false) == 0)
-		{
-			g_hSMGReload[client] = null;
-			return Plugin_Stop;
-		}
-
-		iMaxClipSMG		= 45;
-		iAmmoClipOneSMG = GetEntProp(hClientWeaponSMG[client], Prop_Send, "m_iClip1");
-		iAmmoTypeSMG	= GetEntProp(hClientWeaponSMG[client], Prop_Send, "m_iPrimaryAmmoType");
-
-		if (iAmmoClipOneSMG == -1 || iAmmoTypeSMG == -1)
-		{
-			g_hSMGReload[client] = null;
-			return Plugin_Stop;
-		}
-
-		if (iAmmoTypeSMG != -1)
-		{
-			iCurrentPoolAmmoSMG = GetEntProp(client, Prop_Data, "m_iAmmo", _, 4);
-
-			if (iAmmoClipOneSMG == 45)
-			{
-				g_hSMGReload[client] = null;
-				return Plugin_Stop;
-			}
-
-			iBulletsFiredSMG = iMaxClipSMG - iAmmoClipOneSMG;
-
-			if ((iCurrentPoolAmmoSMG - iBulletsFiredSMG) <= 0)
-			{
-				SetEntProp(hClientWeaponSMG[client], Prop_Data, "m_iClip1", iAmmoClipOneSMG + iCurrentPoolAmmoSMG);
-				SetEntProp(client, Prop_Data, "m_iAmmo", 0, _, 4);
-
-				g_hSMGReload[client] = null;
-				return Plugin_Stop;
-			}
-
-			else
-			{
-				SetEntProp(hClientWeaponSMG[client], Prop_Data, "m_iClip1", 45);
-				SetEntProp(client, Prop_Data, "m_iAmmo", iCurrentPoolAmmoSMG - iBulletsFiredSMG, _, 4);
-				g_hSMGReload[client] = null;
-				return Plugin_Stop;
-			}
-		}
-	}
-
-	g_hSMGReload[client] = null;
-	return Plugin_Stop;
-}
-
 public MRESReturn Weapon_ShootPosition_Post(int client, Handle hReturn)
 {
 	// At this point we always want to use our old origin.
@@ -2444,7 +1994,6 @@ public MRESReturn Weapon_ShootPosition_Post(int client, Handle hReturn)
 /******************************
 PLUGIN STOCKS
 ******************************/
-
 stock int  GetEffectState(int Ent) { return GetEntProp(Ent, Prop_Send, "m_EffectState"); }
 
 stock bool GetEntityOpen(int Ent) { return GetEntProp(Ent, Prop_Send, "m_bOpen", 1) ? true : false; }
