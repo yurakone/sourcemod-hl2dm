@@ -20,6 +20,7 @@ NECESSARY INCLUDES
 /******************************
 PLUGIN DEFINES
 ******************************/
+#define DEVENABLE	0
 
 /*Team Colors*/
 #define PLAYERCOLOR "\x07d8bfd8"
@@ -41,7 +42,7 @@ static const char
 	PL_NAME[]		 = "HL2MP - Fixes & Enhancements",
 	PL_AUTHOR[]		 = "HL2MP Sourcemodders",
 	PL_DESCRIPTION[] = "Half-Life 2: Deathmatch Fixes & Enhancements",
-	PL_VERSION[]	 = "1.6.7";
+	PL_VERSION[]	 = "1.6.8";
 
 /******************************
 PLUGIN HANDLES
@@ -112,9 +113,9 @@ enum struct _gConVar
 	ConVar sm_hl2_footsteps;
 	ConVar mp_forcerespawn;
 	ConVar mp_restartgame;
+	ConVar fps_max_check;
 	ConVar sm_rpg_allow_wep_switch;
 	ConVar sm_ar2_allow_wep_switch;
-	ConVar fps_max_check;
 	ConVar fps_max_min_required;
 	ConVar fps_max_max_required;
 	ConVar sm_hud_stats;
@@ -127,7 +128,26 @@ PLUGIN INTEGERS
 ******************************/
 int		 giZoom[MAXPLAYERS + 1],
 	iRocket[MAXPLAYERS + 1],
-	iOrb[MAXPLAYERS + 1];
+	iOrb[MAXPLAYERS + 1],
+	iChangedWepsAR2[MAXPLAYERS + 1],
+	hClientWeaponAR2[MAXPLAYERS + 1],
+	iChangedWepsSMG[MAXPLAYERS + 1],
+	hClientWeaponSMG[MAXPLAYERS + 1],
+	iDeploy[MAXPLAYERS + 1],
+	iHolstered[MAXPLAYERS + 1],
+	iMaxClipSMG,
+	iAmmoClipOneSMG,
+	iAmmoTypeSMG,
+	iCurrentPoolAmmoSMG,
+	iBulletsFiredSMG,
+	iHolsteredTimeSMG[MAXPLAYERS + 1],
+	hClientWeapon,
+	iHolsteredTimeAR2[MAXPLAYERS + 1],
+	iCurrentPoolAmmoAR2,
+	iBulletsFiredAR2,
+	iMaxClipAR2,
+	iAmmoClipOneAR2,
+	iAmmoTypeAR2;
 
 /******************************
 PLUGIN STRINGMAPS
@@ -235,7 +255,7 @@ static char g_sModels[19][75] = {
 	"models/humans/group03/male_09.mdl"
 };
 
-static char g_sDisconnectReason[64];
+static char g_sDisconnectReason[64], activeweaponclsname[32];
 
 /******************************
 PLUGIN INFO
@@ -253,6 +273,12 @@ LATE LOAD
 ******************************/
 public APLRes AskPluginLoad2(Handle hPlugin, bool bLate, char[] sError, int iLen)
 {
+	if (GetEngineVersion() != Engine_HL2DM)
+	{
+		FormatEx(sError, iLen, "[HL2MP] This plugin is intended for Half-Life 2: Deathmatch only.");
+		return APLRes_Failure;
+	}
+
 	gbLate = bLate;
 	return APLRes_Success;
 }
@@ -262,41 +288,6 @@ INITIATE THE PLUGIN
 ******************************/
 public void OnPluginStart()
 {
-	/*GAME CHECK*/
-	EngineVersion engine = GetEngineVersion();
-
-	if (engine != Engine_HL2DM)
-	{
-		SetFailState("[HL2MP] This plugin is intended for Half-Life 2: Deathmatch only.");
-	}
-
-	Handle gameData = LoadGameConfigFile("dhooks.weapon_shootposition");	// Bullet position fix by xutaxkamay
-
-	if (gameData == INVALID_HANDLE)
-	{
-		SetFailState("[SM] FireBullets Fix cannot load: Missing gamedata.");
-	}
-
-	else PrintToServer("[SM] FireBullets Fix has successfully loaded.");
-
-	int offset = GameConfGetOffset(gameData, "Weapon_ShootPosition");
-
-	if (offset == -1)
-	{
-		SetFailState("[FireBullets Fix] failed to find offset");
-	}
-
-	LogMessage("Found offset for Weapon_ShootPosition %d", offset);
-
-	g_hWeapon_ShootPosition = DHookCreate(offset, HookType_Entity, ReturnType_Vector, ThisPointer_CBaseEntity);
-
-	if (g_hWeapon_ShootPosition == INVALID_HANDLE)
-	{
-		SetFailState("[FireBullets Fix] couldn't hook Weapon_ShootPosition");
-	}
-
-	CloseHandle(gameData);
-
 	AddNormalSoundHook(OnSound);
 
 	/*PRECACHE SOUNDS*/
@@ -359,12 +350,13 @@ public void OnPluginStart()
 	gConVar.sm_pluginmessages_check	 = CreateConVar("sm_pluginmessages_check", "1", "Check if a client's \"cl_showpluginmessages\" is set to 0 and displays a message to set it to 1", _, true, 0.0, true, 1.0);
 	gConVar.sm_missing_sounds_fix	 = CreateConVar("sm_missing_sounds_fix", "1", "Enable/Disable missing sounds fix", 0, true, 0.0, true, 1.0);
 	gConVar.sm_hl2_footsteps		 = CreateConVar("sm_hl2_footsteps", "1", "Enable/Disable HL2 footstep sounds", 0, true, 0.0, true, 1.0);
-	gConVar.sm_rpg_allow_wep_switch	 = CreateConVar("sm_rpg_allow_wep_switch", "0", "Whether players can switch guns after an active rocket has been fired", 0, true, 0.0, true, 1.0);
-	gConVar.sm_ar2_allow_wep_switch	 = CreateConVar("sm_ar2_allow_wep_switch", "0", "Whether players can switch guns after an active orb has been fired", 0, true, 0.0, true, 1.0);
 
 	gConVar.fps_max_check			 = CreateConVar("sm_fps_max_check", "1", "Enable/Disable the checking of client's fps_max value", 0, true, 0.0, true, 1.0);
 	gConVar.fps_max_min_required	 = CreateConVar("sm_fps_min", "60", "Minimum value that a client needs to set their fps_max at", 0, true, 10.0);
 	gConVar.fps_max_max_required	 = CreateConVar("sm_fps_max", "1000", "Maximum value that a client needs to set their fps_max at", 0, true, 60.0);
+
+	gConVar.sm_rpg_allow_wep_switch	 = CreateConVar("sm_rpg_allow_wep_switch", "0", "Whether players can switch guns after an active rocket has been fired", 0, true, 0.0, true, 1.0);
+	gConVar.sm_ar2_allow_wep_switch	 = CreateConVar("sm_ar2_allow_wep_switch", "0", "Whether players can switch guns after an active orb has been fired", 0, true, 0.0, true, 1.0);
 
 	// gConVar.sm_hud_stats			 = CreateConVar("sm_hud_stats", "1", "Shows observed player's information on HUD", 0, true, 0.0, true, 1.0); // TODO: Show observed player's HUD elements
 
@@ -387,6 +379,16 @@ public void OnPluginStart()
 	HookConVarChange(gConVar.g_cTeamHook, OnConVarChanged_pModelFix);
 	HookConVarChange(gConVar.g_cTeamplay, OnConVarChanged_Teamplay);
 	HookConVarChange(gConVar.g_cTimeleftEnable, OnConVarChanged_HudTimeleft);
+
+	// We need to reload the weapons when they pick up ammo after a low or empty ammo reserve
+	HookEntityOutput("weapon_ar2", "OnPlayerPickup", EntityOutput_Ar2);
+	HookEntityOutput("item_ammo_ar2", "OnPlayerTouch", EntityOutput_Ar2);
+	HookEntityOutput("item_ammo_ar2_large", "OnPlayerTouch", EntityOutput_Ar2);
+
+	HookEntityOutput("weapon_smg1", "OnPlayerPickup", EntityOutput_SMG);
+	HookEntityOutput("item_ammo_smg1", "OnPlayerTouch", EntityOutput_SMG);
+	HookEntityOutput("item_ammo_smg1_large", "OnPlayerTouch", EntityOutput_SMG);
+
 	HookUserMessage(GetUserMessageId("VGUIMenu"), UserMsg_VGUIMenu, false);
 	gConVar.sv_gravity.AddChangeHook(OnGravityChanged);
 
@@ -404,6 +406,8 @@ public void OnPluginStart()
 	RegConsoleCmd("sm_sndfix", Command_Sndfix, "Enable/Disable sound fixes");
 	RegConsoleCmd("xfix", xfix_credits, "Credits listing");
 
+	BulletFix();
+
 	AutoExecConfig(true, "hl2mp_fix_config");
 
 	for (int i = MaxClients; i > 0; --i)	// Late load for client pref
@@ -413,6 +417,44 @@ public void OnPluginStart()
 
 		OnClientCookiesCached(i);
 	}
+
+	if (gbLate)
+	{
+		for (int client = 1; client < MaxClients; client++)
+		{
+			OnClientPutInServer(client);
+		}
+	}
+}
+
+void BulletFix()
+{
+	Handle gameData = LoadGameConfigFile("dhooks.weapon_shootposition");	// Bullet position fix by xutaxkamay
+
+	if (gameData == INVALID_HANDLE)
+	{
+		SetFailState("[SM] FireBullets Fix cannot load: Missing gamedata.");
+	}
+
+	else PrintToServer("[SM] FireBullets Fix has successfully loaded.");
+
+	int offset = GameConfGetOffset(gameData, "Weapon_ShootPosition");
+
+	if (offset == -1)
+	{
+		SetFailState("[FireBullets Fix] failed to find offset");
+	}
+
+	LogMessage("Found offset for Weapon_ShootPosition %d", offset);
+
+	g_hWeapon_ShootPosition = DHookCreate(offset, HookType_Entity, ReturnType_Vector, ThisPointer_CBaseEntity);
+
+	if (g_hWeapon_ShootPosition == INVALID_HANDLE)
+	{
+		SetFailState("[FireBullets Fix] couldn't hook Weapon_ShootPosition");
+	}
+
+	CloseHandle(gameData);
 }
 
 public Action xfix_credits(int client, int args)
@@ -553,7 +595,13 @@ public Action Event_RoundBegin(Event event, const char[] name, bool dontBroadcas
 
 Action event_death(Event event, const char[] name, bool dontBroadcast)
 {
-	int client = GetClientOfUserId(GetEventInt(event, "userid"));
+	int client				 = GetClientOfUserId(GetEventInt(event, "userid"));
+
+	g_bAr2AltFire[client]	 = false;
+	g_bRocketFired[client]	 = false;
+
+	hClientWeaponAR2[client] = 0;
+	hClientWeaponSMG[client] = 0;
 
 	if (GetConVarInt(gConVar.mp_forcerespawn) > 0)
 		CreateTimer(3.0, t_forcerespawn, client, TIMER_FLAG_NO_MAPCHANGE);	  // mp_forcerespawn bypass fix
@@ -583,6 +631,9 @@ public void OnClientPutInServer(int iClient)
 	CreateTimer(60.0, t_AuthCheck, iClient, TIMER_FLAG_NO_MAPCHANGE);
 
 	SDKHook(iClient, SDKHook_WeaponSwitchPost, OnClientSwitchWeapon);
+
+	iChangedWepsAR2[iClient] = 2;
+	iChangedWepsSMG[iClient] = 2;
 
 	DHookEntity(g_hWeapon_ShootPosition, true, iClient, _, Weapon_ShootPosition_Post);
 
@@ -1177,6 +1228,8 @@ public bool OnClientConnect(int client)
 public void OnClientDisconnect(int client)
 {
 	g_bAuthenticated[client] = false;
+	g_bAr2AltFire[client]	 = false;
+	g_bRocketFired[client]	 = false;
 
 	if (GetConVarBool(gConVar.g_cEnable))
 	{
@@ -1400,24 +1453,111 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 		return Plugin_Continue;
 	}
 
-	int iClientWeapon = GetEntPropEnt(iClient, Prop_Send, "m_hActiveWeapon");
-
-	if (iClientWeapon != -1 && IsValidEntity(iClientWeapon))
+	if (!IsClientObserver(iClient) || IsPlayerAlive(iClient))
 	{
-		char wpncls[32];
-		GetEntityClassname(iClientWeapon, wpncls, sizeof(wpncls));
+		int curtime = GetTime();
 
-		if (strcmp(wpncls, "weapon_ar2", false) == 0 && (iButtons & IN_ATTACK2))
+		if (curtime > iHolsteredTimeAR2[iClient])
 		{
-			int iSecondaryAmmo = GetEntProp(iClientWeapon, Prop_Send, "m_iSecondaryAmmoType");
-			int iSecAmmoPool   = GetEntProp(iClient, Prop_Data, "m_iAmmo", _, iSecondaryAmmo);
+			hClientWeapon = GetEntPropEnt(iClient, Prop_Send, "m_hActiveWeapon");
 
-			if (iSecAmmoPool > 0)
+			if (IsValidEntity(hClientWeaponAR2[iClient]) && hClientWeaponAR2[iClient] != 0)
 			{
-				g_bAr2AltFire[iClient] = true;
-				// CreateTimer(0.5, t_ar2hook, iClient, TIMER_FLAG_NO_MAPCHANGE);
+				GetEntityClassname(hClientWeapon, activeweaponclsname, sizeof(activeweaponclsname));
+
+				// We can't be active.
+				if (strcmp(activeweaponclsname, "weapon_ar2", false) != 0)
+				{
+					iMaxClipAR2		= 30;
+					iAmmoClipOneAR2 = GetEntProp(hClientWeaponAR2[iClient], Prop_Send, "m_iClip1");
+					iAmmoTypeAR2	= GetEntProp(hClientWeaponAR2[iClient], Prop_Send, "m_iPrimaryAmmoType");
+
+					if (iAmmoTypeAR2 != -1)
+					{
+						iCurrentPoolAmmoAR2 = GetEntProp(iClient, Prop_Data, "m_iAmmo", _, 1);
+
+						if (iAmmoClipOneAR2 < 30)
+						{
+							iBulletsFiredAR2 = iMaxClipAR2 - iAmmoClipOneAR2;
+
+							if ((iCurrentPoolAmmoAR2 - iBulletsFiredAR2) <= 0)
+							{
+								SetEntProp(hClientWeaponAR2[iClient], Prop_Data, "m_iClip1", iAmmoClipOneAR2 + iCurrentPoolAmmoAR2);
+								SetEntProp(iClient, Prop_Data, "m_iAmmo", 0, _, 1);
+							}
+
+							else
+							{
+								SetEntProp(hClientWeaponAR2[iClient], Prop_Data, "m_iClip1", 30);
+								SetEntProp(iClient, Prop_Data, "m_iAmmo", iCurrentPoolAmmoAR2 - iBulletsFiredAR2, _, 1);
+							}
+						}
+					}
+				}
 			}
 		}
+
+		if (curtime > iHolsteredTimeSMG[iClient])
+		{
+			if (IsValidEntity(hClientWeaponSMG[iClient]) && hClientWeaponSMG[iClient] != 0)
+			{
+				GetEntityClassname(hClientWeapon, activeweaponclsname, sizeof(activeweaponclsname));
+
+				// We can't be active.
+				if (strcmp(activeweaponclsname, "weapon_smg1", false) != 0)
+				{
+					iMaxClipSMG		= 45;
+					iAmmoClipOneSMG = GetEntProp(hClientWeaponSMG[iClient], Prop_Send, "m_iClip1");
+					iAmmoTypeSMG	= GetEntProp(hClientWeaponSMG[iClient], Prop_Send, "m_iPrimaryAmmoType");
+
+					if (iAmmoTypeSMG != -1)
+					{
+						iCurrentPoolAmmoSMG = GetEntProp(iClient, Prop_Data, "m_iAmmo", _, 4);
+
+						if (iAmmoClipOneSMG < 45)
+						{
+							iBulletsFiredSMG = iMaxClipSMG - iAmmoClipOneSMG;
+
+							if ((iCurrentPoolAmmoSMG - iBulletsFiredSMG) <= 0)
+							{
+								SetEntProp(hClientWeaponSMG[iClient], Prop_Data, "m_iClip1", iAmmoClipOneSMG + iCurrentPoolAmmoSMG);
+								SetEntProp(iClient, Prop_Data, "m_iAmmo", 0, _, 4);
+							}
+
+							else
+							{
+								SetEntProp(hClientWeaponSMG[iClient], Prop_Data, "m_iClip1", 45);
+								SetEntProp(iClient, Prop_Data, "m_iAmmo", iCurrentPoolAmmoSMG - iBulletsFiredSMG, _, 4);
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if (strcmp(activeweaponclsname, "weapon_ar2", false) == 0)
+		{
+			if (GetConVarInt(gConVar.sm_ar2_allow_wep_switch) == 0)
+			{
+				if (curtime < iDeploy[iClient])
+					return Plugin_Continue;
+
+				int iSecondaryAmmo = GetEntProp(hClientWeaponAR2[iClient], Prop_Send, "m_iSecondaryAmmoType");
+				int iSecAmmoPool   = GetEntProp(iClient, Prop_Data, "m_iAmmo", _, iSecondaryAmmo);
+
+				if (iSecAmmoPool > 0 && (iButtons & IN_ATTACK2))	// m_flNextSecondaryAttack
+				{
+					g_bAr2AltFire[iClient] = true;
+					CreateTimer(0.51, t_CheckAltFire, iClient, TIMER_FLAG_NO_MAPCHANGE);
+				}
+			}
+		}
+	}
+
+	else
+	{
+		hClientWeaponAR2[iClient] = 0;
+		hClientWeaponSMG[iClient] = 0;
 	}
 
 	GetClientEyePosition(iClient, g_vecOldWeaponShootPos[iClient]);
@@ -1591,6 +1731,36 @@ public Action OnPlayerRunCmd(int iClient, int &iButtons, int &iImpulse, float fV
 	return Plugin_Continue;
 }
 
+Action t_CheckAltFire(Handle timer, int client)
+{
+	if (g_bAr2AltFire[client])
+	{
+		g_bAr2AltFire[client] = false;
+	}
+
+	return Plugin_Stop;
+}
+
+Action EntityOutput_Ar2(const char[] output, int caller, int activator, float delay)
+{
+	int curtime					 = GetTime();
+	iHolstered[activator]		 = GetConVarInt(gConVar.sk_auto_reload_time);
+
+	iHolsteredTimeAR2[activator] = curtime + iHolstered[activator];
+
+	return Plugin_Continue;
+}
+
+Action EntityOutput_SMG(const char[] output, int caller, int activator, float delay)
+{
+	int curtime					 = GetTime();
+	iHolstered[activator]		 = GetConVarInt(gConVar.sk_auto_reload_time);
+
+	iHolsteredTimeSMG[activator] = curtime + iHolstered[activator];
+
+	return Plugin_Continue;
+}
+
 public Action OnClientToggleZoom(int iClient, const char[] sCommand, int iArgs)
 {
 	if (giZoom[iClient] != ZOOM_NONE)
@@ -1609,6 +1779,48 @@ public Action OnClientToggleZoom(int iClient, const char[] sCommand, int iArgs)
 
 public Action OnClientSwitchWeapon(int iClient, int iWeapon)
 {
+	int curtime			= GetTime();
+	iHolstered[iClient] = GetConVarInt(gConVar.sk_auto_reload_time);
+
+	hClientWeapon		= GetEntPropEnt(iClient, Prop_Send, "m_hActiveWeapon");
+
+	if (hClientWeapon != -1 && IsValidEntity(hClientWeapon))
+	{
+		GetEntityClassname(hClientWeapon, activeweaponclsname, sizeof(activeweaponclsname));
+
+		if (strcmp(activeweaponclsname, "weapon_ar2", false) == 0)
+		{
+			iChangedWepsAR2[iClient]  = 0;
+			hClientWeaponAR2[iClient] = hClientWeapon;
+			iDeploy[iClient]		  = curtime + 1;
+		}
+
+		if (strcmp(activeweaponclsname, "weapon_smg1", false) == 0)
+		{
+			iChangedWepsSMG[iClient]  = 0;
+			hClientWeaponSMG[iClient] = hClientWeapon;
+		}
+
+		if (strcmp(activeweaponclsname, "weapon_ar2", false) != 0)
+		{
+			if (iChangedWepsAR2[iClient] == 1)
+			{
+				iHolsteredTimeAR2[iClient] = curtime + iHolstered[iClient];
+			}
+		}
+
+		if (strcmp(activeweaponclsname, "weapon_smg1", false) != 0)
+		{
+			if (iChangedWepsSMG[iClient] == 1)
+			{
+				iHolsteredTimeSMG[iClient] = curtime + iHolstered[iClient];
+			}
+		}
+	}
+
+	iChangedWepsAR2[iClient]++;
+	iChangedWepsSMG[iClient]++;
+
 	if (giZoom[iClient] == ZOOM_TOGL)
 	{
 		giZoom[iClient] = ZOOM_NONE;
@@ -1690,14 +1902,11 @@ public void OnEntityCreated(int iEntity, const char[] sEntity)
 		}
 	}
 
-	if (GetConVarInt(gConVar.sm_ar2_allow_wep_switch) == 0)
+	if (StrEqual(sEntity, "prop_combine_ball"))
 	{
-		if (StrEqual(sEntity, "prop_combine_ball"))
+		for (int client = 1; client <= MaxClients; client++)
 		{
-			for (int client = 1; client <= MaxClients; client++)
-			{
-				g_bAr2AltFire[client] = false;
-			}
+			g_bAr2AltFire[client] = false;
 		}
 	}
 
@@ -1932,6 +2141,9 @@ public Action Event_GameMessage(Event hEvent, const char[] sEvent, bool bDontBro
 
 public Action HandleUse(int client, const char[] cmd, int argc)
 {
+	if (!IsClientInGame(client))
+		return Plugin_Continue;
+
 	char WeaponName[32];
 	GetClientWeapon(client, WeaponName, sizeof(WeaponName));
 
@@ -1957,9 +2169,14 @@ public Action CheckAngles(Handle timer)
 		if (IsValidEntity(i) && HasEntProp(i, Prop_Send, "m_angRotation"))
 		{
 			static bool	 wrongAngle;
-			static float ang[3], old_ang[3];
+			static float ang[3];
+#if DEVENABLE
+			static float old_ang[3];
+#endif
 			GetEntPropVector(i, Prop_Send, "m_angRotation", ang);
-			old_ang	   = ang;
+#if DEVENABLE
+			old_ang = ang;
+#endif
 			wrongAngle = false;
 			for (int j; j < 3; j++)
 			{
@@ -1977,7 +2194,9 @@ public Action CheckAngles(Handle timer)
 				class[0] = name[0] = 0;
 				GetEdictClassname(i, class, 64);
 				GetEntPropString(i, Prop_Data, "m_iName", name, 64);
+#if DEVENABLE
 				PrintToServer(">	Wrong angles of the prop '%s' (#%d, '%s'):\n	%.2f, %.2f, %.2f (fixed to: %.2f, %.2f, %.2f)", class, i, name, old_ang[0], old_ang[1], old_ang[2], ang[0], ang[1], ang[2]);
+#endif
 			}
 		}
 	}
