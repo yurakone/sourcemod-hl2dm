@@ -8,6 +8,7 @@ COMPILE OPTIONS
 NECESSARY INCLUDES
 ******************************/
 #include <sourcemod>
+#include <base>
 #include <clientprefs>
 #include <sdktools>
 #include <sdkhooks>
@@ -240,6 +241,11 @@ static char g_sModels[19][75] = {
 static char g_sDisconnectReason[64];
 
 /******************************
+DHOOKS
+******************************/
+DynamicHook gExplosionDamageHook;
+
+/******************************
 PLUGIN INFO
 ******************************/
 public Plugin myinfo =
@@ -251,25 +257,12 @@ public Plugin myinfo =
 };
 
 /******************************
-LATE LOAD
-******************************/
-public APLRes AskPluginLoad2(Handle hPlugin, bool bLate, char[] sError, int iLen)
-{
-	if (GetEngineVersion() != Engine_HL2DM)
-	{
-		FormatEx(sError, iLen, "[HL2MP] This plugin is intended for Half-Life 2: Deathmatch only.");
-		return APLRes_Failure;
-	}
-
-	gbLate = bLate;
-	return APLRes_Success;
-}
-
-/******************************
 INITIATE THE PLUGIN
 ******************************/
 public void OnPluginStart()
 {
+	gExplosionDamageHook = LoadDHooksOffset("dhooks.hl2mp_tinnitus_fix", "OnDamagedByExplosion");
+
 	AddNormalSoundHook(OnSound);
 
 	/*PRECACHE SOUNDS*/
@@ -436,15 +429,16 @@ public Action xfix_credits(int client, int args)
 	{
 		PrintToServer("===================================\nHL2MP - Fixes & Enhancements\n        Version: %s\n===================================\n\n\
 	This plugin is a collection of fixes for Half-Life 2: Deathmatch made possible thanks to:\n \
-	1) Benni - Gravity Gun prop hold fix\n \
-	2) Chanz - Sprint delay fix\n \
-	3) Grey83 - Set local angles fix\n \
-	4) Harper - Creator of xFix and fixing a myriad of HL2MP issues!\n \
-	5) Peter Brev - Additional HL2MP fixes\n \
-	6) Sidez - Grenade glow edict fix\n \
-	7) Toizy - Jesus/T-Pose animation fix\n \
-	8) V952 - Shotgun lag compensation fix\n \
-	9) Xutaxkamay - Bullet fix\n\n \
+	1) Adrian - Tinnitus Dhooks fix\n\n \
+	2) Benni - Gravity Gun prop hold fix\n \
+	3) Chanz - Sprint delay fix\n \
+	4) Grey83 - Set local angles fix\n \
+	5) Harper - Creator of xFix and fixing a myriad of HL2MP issues!\n \
+	6) Peter Brev - Additional HL2MP fixes\n \
+	7) Sidez - Grenade glow edict fix\n \
+	8) Toizy - Jesus/T-Pose animation fix\n \
+	9) V952 - Shotgun lag compensation fix\n \
+	10) Xutaxkamay - Bullet fix\n\n \
 	xFix is a continuously updated plugin featuring more fixes as they become available!",
 					  PL_VERSION);
 
@@ -595,6 +589,9 @@ public void OnClientPutInServer(int iClient)
 	if (GetConVarBool(gConVar.fps_max_check))
 		QueryClientConVar(iClient, "fps_max", q_fpsmax);
 
+	if (!IsFakeClient(iClient))
+		gExplosionDamageHook.HookEntity(Hook_Pre, iClient, OnClientDamagedByExplosion);
+
 	iRocket[iClient] = 0;
 	iOrb[iClient]	 = 0;
 
@@ -627,6 +624,11 @@ public void OnClientPutInServer(int iClient)
 			CreateTimer(0.5, T_BlockConnectMOTD, iClient, TIMER_FLAG_NO_MAPCHANGE);
 		}
 	}
+}
+
+MRESReturn OnClientDamagedByExplosion(DHookParam params)
+{
+	return MRES_Supercede; // Prevent ear ringing sound, which may play infinitely (engine DSP bug)
 }
 
 public void OnClientPostAdminCheck(int client)
@@ -1662,15 +1664,8 @@ public void OnGravityChanged(Handle hConvar, const char[] sOldValue, const char[
 }
 
 public Action Hook_OnTakeDamage(int iClient, int &iAttacker, int &iInflictor, float &fDamage, int &iDamageType)
-{
-	if (iDamageType & DMG_BLAST)
-	{
-		// Remove explosion ringing noise for everyone
-		// (typically this is removed by competitive configs, which provides a significant advantage and cannot be prevented)
-		iDamageType = DMG_GENERIC;
-	}
-
-	else if (iDamageType & DMG_FALL)
+{	
+	if (iDamageType & DMG_FALL)
 	{
 		if (GetConVarInt(gConVar.mp_falldamage) == -1)
 			return Plugin_Handled;
