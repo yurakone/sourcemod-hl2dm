@@ -489,14 +489,14 @@ void q_PluginMessages(QueryCookie cookie, int client, ConVarQueryResult result, 
 
 void q_fpsmax(QueryCookie cookie, int client, ConVarQueryResult result, const char[] cvarName, const char[] cvarValue)
 {
+	if (!IsClientInGame(client) || IsFakeClient(client))
+		return;
+
 	if (result != ConVarQuery_Okay)
 	{
 		KickClient(client, "Client command query \"fps_max\" failed. Reconnect.");
 		return;
 	}
-
-	if (!IsClientInGame(client) || IsFakeClient(client))
-		return;
 
 	int cvar = StringToInt(cvarValue);
 
