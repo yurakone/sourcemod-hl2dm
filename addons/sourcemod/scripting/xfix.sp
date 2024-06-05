@@ -449,16 +449,18 @@ public Action xfix_credits(int client, int args)
 
 	PrintToConsole(client, "===================================\nHL2MP - Fixes & Enhancements\n        Version: %s\n===================================\n\n\
 	This plugin is a collection of fixes for Half-Life 2: Deathmatch made possible thanks to:\n \
-	1) Benni - Gravity Gun prop hold fix\n \
-	2) Chanz - Sprint delay fix\n \
-	3) Grey83 - Set local angles fix\n \
-	4) Harper - Creator of xFix and fixing a myriad of HL2MP issues!\n \
-	5) Peter Brev - Additional HL2MP fixes\n \
-	6) Sidez - Grenade glow edict fix\n \
-	7) Toizy - Jesus/T-Pose animation fix\n \
-	8) V952 - Shotgun lag compensation fix\n\n \
+	1) Adrian - Tinnitus Dhooks fix\n\n \
+	2) Benni - Gravity Gun prop hold fix\n \
+	3) Chanz - Sprint delay fix\n \
+	4) Grey83 - Set local angles fix\n \
+	5) Harper - Creator of xFix and fixing a myriad of HL2MP issues!\n \
+	6) Peter Brev - Additional HL2MP fixes\n \
+	7) Sidez - Grenade glow edict fix\n \
+	8) Toizy - Jesus/T-Pose animation fix\n \
+	9) V952 - Shotgun lag compensation fix\n \
+	10) Xutaxkamay - Bullet fix\n\n \
 	xFix is a continuously updated plugin featuring more fixes as they become available!",
-				   PL_VERSION);
+					  PL_VERSION);
 
 	return Plugin_Handled;
 }
