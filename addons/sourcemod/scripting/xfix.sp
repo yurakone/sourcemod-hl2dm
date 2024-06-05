@@ -43,7 +43,7 @@ static const char
 	PL_NAME[]		 = "HL2MP - Fixes & Enhancements",
 	PL_AUTHOR[]		 = "HL2MP Sourcemodders",
 	PL_DESCRIPTION[] = "Half-Life 2: Deathmatch Fixes & Enhancements",
-	PL_VERSION[]	 = "1.6.9";
+	PL_VERSION[]	 = "1.6.10";
 
 /******************************
 PLUGIN HANDLES
